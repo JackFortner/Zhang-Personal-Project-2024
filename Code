@@ -1,0 +1,83 @@
+import streamlit as st
+import pandas as pd
+import yfinance as yf
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import GradientBoostingRegressor
+
+def fetch_stock_data(ticker, start_date, end_date):
+    """Fetch stock price and volume data from Yahoo Finance."""
+    try:
+        stock_data = yf.download(ticker, start=start_date, end=end_date, interval='1mo')
+        if stock_data.empty:
+            st.error("Fetched stock data is empty.")
+        else:
+            st.success(f"Successfully fetched data for {ticker}")
+        return stock_data[['Adj Close']].copy()
+    except Exception as e:
+        st.error(f"Error fetching data for {ticker}: {e}")
+        return pd.DataFrame()
+
+def load_factor_data():
+    """Load factor data from a CSV file."""
+    try:
+        factor_data = pd.read_csv("C:\\Users\\jacks\\OneDrive - University of Arkansas\\Zhang Personal Project\\Fama French Factors for Personal Project.csv", index_col='Date', parse_dates=True)
+        if factor_data.empty:
+            st.error("Loaded factor data is empty.")
+        else:
+            st.success("Successfully loaded factor data.")
+        return factor_data
+    except FileNotFoundError as e:
+        st.error(f"File error: {e}")
+        return pd.DataFrame()
+
+def main():
+    st.title("Stock Return Prediction Using Enhanced Fama-French Model")
+
+    ticker = st.text_input("Enter the stock ticker for analysis:", "AAPL")
+    start_date = st.date_input("Start date", pd.to_datetime('2015-01-01'))
+    end_date = st.date_input("Prediction Month. Make sure both dates start at the first.", pd.to_datetime('2024-02-01'))  
+
+    if st.button("Fetch Data"):
+        stock_data_original = fetch_stock_data(ticker, start_date, end_date)
+        if stock_data_original.empty:
+            st.write("No data available for this stock.")
+            return
+        
+        stock_data = stock_data_original.copy()
+        stock_data['Returns'] = stock_data['Adj Close'].pct_change()
+        st.write("Preview of stock data with returns:", stock_data.head())
+
+        factor_data = load_factor_data()
+        if factor_data.empty:
+            return
+
+        combined_data = pd.merge(stock_data[['Returns']], factor_data, left_index=True, right_index=True, how='left').fillna(method='ffill').dropna()
+        if combined_data.empty:
+            st.write("No overlapping data between stock returns and factors.")
+            return
+        
+        st.write("Preview of combined data:", combined_data.tail())  # Show the tail to ensure we have the latest data
+
+        X = combined_data[['Mkt-RF', 'SMB', 'HML', 'ROE', 'Liquidity']]
+        y = combined_data['Returns']
+
+        # Ensure the last available data is used for prediction
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, shuffle=False)
+        
+        model = GradientBoostingRegressor(n_estimators=100, learning_rate=0.1, max_depth=3, random_state=42)
+        model.fit(X_train, y_train)
+
+        # Use the latest available factors for prediction
+        latest_factors = X.loc[[X.index.max()]]  # Using the max index to ensure we have the latest data
+        prediction_date = X.index.max() + pd.DateOffset(months=1)  # Set prediction date to one month after the latest factors
+        
+        next_month_return = model.predict(latest_factors)
+
+        # Display the correct prediction month
+        st.write(f"Latest factors date: {X.index.max().strftime('%Y-%m')}")
+        st.write(f"Predicting returns for: {prediction_date.strftime('%Y-%m')}")
+        st.write(f"Predicted return for {ticker} for {prediction_date.strftime('%Y-%m')}: {next_month_return[0] * 100:.2f}%")
+
+if __name__ == '__main__':
+    st.set_page_config(page_title="Fama-French Model Enhancement", layout="wide")
+    main()
